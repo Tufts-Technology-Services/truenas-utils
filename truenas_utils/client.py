@@ -18,7 +18,7 @@ class TrueNASClient:
     This class provides methods to create datasets and NFS shares.
     It uses the TrueNas API to perform these operations.
     """
-    def __init__(self, api_key=TRUENAS_APIKEY, hostname=TRUENAS_HOST, parent_dataset=TRUENAS_PARENT_DATASET, 
+    def __init__(self, api_key=TRUENAS_APIKEY, hostname=TRUENAS_HOST, parent_dataset=TRUENAS_PARENT_DATASET,
                  verify_ssl=VERIFY_SSL, starfish_hosts=STARFISH_HOSTS, globus_hosts=GLOBUS_HOSTS):
         if api_key is None:
             raise ValueError("API key is required to connect to TrueNas.")
