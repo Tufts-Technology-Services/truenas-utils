@@ -12,19 +12,22 @@ STARFISH_HOSTS = os.environ.get('STARFISH_HOSTS', [])
 GLOBUS_HOSTS = os.environ.get('GLOBUS_HOSTS', [])
 
 
-class TrueNasClient:
+class TrueNASClient:
     """
     A client to interact with the TrueNas API.
     This class provides methods to create datasets and NFS shares.
     It uses the TrueNas API to perform these operations.
     """
-    def __init__(self, api_key=TRUENAS_APIKEY, hostname=TRUENAS_HOST, parent_dataset=TRUENAS_PARENT_DATASET, verify_ssl=VERIFY_SSL):
+    def __init__(self, api_key=TRUENAS_APIKEY, hostname=TRUENAS_HOST, parent_dataset=TRUENAS_PARENT_DATASET, 
+                 verify_ssl=VERIFY_SSL, starfish_hosts=STARFISH_HOSTS, globus_hosts=GLOBUS_HOSTS):
         if api_key is None:
             raise ValueError("API key is required to connect to TrueNas.")
         self.api_key = api_key
         self.uri = f"wss://{hostname}/websocket"
         self.parent_dataset = parent_dataset
         self.verify_ssl = verify_ssl
+        self.starfish_hosts = starfish_hosts
+        self.globus_hosts = globus_hosts
 
     def ping(self):
         """Ping the TrueNas server to check if the connection is alive."""
@@ -74,8 +77,8 @@ class TrueNasClient:
         # Convert the unix mode to a binary string
         validate_mode(unix_mode)
         
-        return [generate_perm("USER_OBJ", unix_mode[0]), 
-                generate_perm("GROUP_OBJ", unix_mode[1]), 
+        return [generate_perm("USER_OBJ", unix_mode[0]),
+                generate_perm("GROUP_OBJ", unix_mode[1]),
                 generate_perm("OTHER", unix_mode[2])]
 
     def get_acls(self, project_name):
@@ -85,13 +88,13 @@ class TrueNasClient:
         project_path = Path(f"/mnt/{self.parent_dataset}") / project_name
 
         #path, simplified, resolve_ids
-        self.__send_arg_call("filesystem.getacl", project_path.as_posix(), True, False)
+        return self.__get("filesystem.getacl", project_path.as_posix())
     
     def create_starfish_share(self, project_path: Path):
         return ("sharing.nfs.create", {
             "path": project_path.as_posix(),  # Convert to POSIX path
             "security": ['SYS'],
-            "hosts": STARFISH_HOSTS,
+            "hosts": self.starfish_hosts,
             "maproot_user": 'root',
             "maproot_group": 'wheel',
             "comment": 'starfish',
@@ -102,11 +105,47 @@ class TrueNasClient:
         return ("sharing.nfs.create", {
             "path": project_path.as_posix(),  # Convert to POSIX path
             "security": ['SYS'],
-            "hosts": GLOBUS_HOSTS,
+            "hosts": self.globus_hosts,
             "comment": 'globus'
         })
     
-    def create_project_share(self, project_name: str, quota: int, owner_uid: int, owning_group_gid: int):
+    def check_share_details(self, project_name: str, quota: int, owner_uid: int, owning_group_gid: int):
+        project_path = Path(f"/mnt/{self.parent_dataset}") / project_name
+        
+        share_details = {"dataset_exists": False,
+                         "quota_matches": False,
+                         "starfish_share_exists": False,
+                         "globus_share_exists": False,
+                         "owner_match": False,
+                         "group_match": False,
+                         "permissions_match": False
+        }
+
+        # Check if the dataset already exists
+        di = self.get_dataset_info(project_path.as_posix(), details=True)
+        if di is None:
+            return share_details
+        else:
+            share_details['dataset_exists'] = True
+            share_details['quota_matches'] = di['quota'] == quota
+        # Check if the share already exists
+        si = self.get_share_info(project_path.as_posix())
+        if len(si) == 0:
+            return share_details
+        else:
+            share_details['starfish_share_exists'] = any([i for i in si if i['comment'] == 'starfish'])
+            share_details['globus_share_exists'] = any([i for i in si if i['comment'] == 'globus'])
+        
+        acls = self.get_acls(project_name)
+        share_details['owner_match'] = acls['uid'] == owner_uid
+        share_details['group_match'] = acls['gid'] == owning_group_gid
+        share_details['permissions_match'] = all([i['perms'] == self.generate_acls('770')[0]['perms'] for i in acls['acls']])
+        return share_details
+
+
+    def create_project_share(self, project_name: str, quota: int, owner_uid: int, owning_group_gid: int,
+                             create_dataset: bool = True, create_globus_share: bool = True,
+                             create_starfish_share: bool = True):
         """
         Create a dataset and NFS share for an RT project.
         # Create dataset with quota
@@ -116,16 +155,27 @@ class TrueNasClient:
         # Set permissions (chmod)
         """
         project_path = Path(f"/mnt/{self.parent_dataset}") / project_name
-        self.__send_calls([
-            ("pool.dataset.create", {
+        
+        # Create the dataset and share
+        # Create the dataset with the specified quota
+        # Create the NFS share for starfish
+        # Create the NFS share for globus
+        # Set the owner and group for the dataset
+        # Set the permissions for the dataset
+        # Set the ACLs for the dataset
+        calls = []
+        if create_dataset:
+            calls.append(("pool.dataset.create", {
                 "name": f"{self.parent_dataset}/{project_name}",
                 "type": "FILESYSTEM", #VOLUME OR FILESYSTEM
                 "acltype": "POSIX",
                 "refquota": quota
-            }),
-            self.create_starfish_share(project_path),
-            self.create_globus_share(project_path)
-        ])  # Send the commands to TrueNas
+            }))
+        if create_starfish_share:
+            calls.append(self.create_starfish_share(project_path))
+        if create_globus_share:
+            calls.append(self.create_globus_share(project_path))
+        self.__send_calls(calls)  # Send the commands to TrueNas
 
         self.__send_job("filesystem.chown", {
             "path": project_path.as_posix(),
@@ -134,33 +184,44 @@ class TrueNasClient:
         })
         self.__send_job("filesystem.setacl", {
                 "path": project_path.as_posix(),
-                "dacl": [
-                    {"tag": "user", "id": owner_uid, "permissions": "full"},
-                    {"tag": "group", "id": owning_group_gid, "permissions": "full"},
-                    {"tag": "other", "permissions": "none"}
-                ],
+                "dacl": self.generate_acls('770'),
                 "acltype": "POSIX1E"
         })
-        print(f"Created Tier2 dataset and share {project_name} with quota {quota} for owner UID {owner_uid} and GID {owning_group_gid}.")
-        """
-            #interesting methods
-            #filesystem.can_access_as_user
-            #filesystem.mkdir
-            #filesystem.acl_is_trivial
+        # todo: customize message depending on what calls were made
+        #print(f"Created Tier2 dataset and share {project_name} with quota {quota} for owner UID {owner_uid} and GID {owning_group_gid}.")
 
-            #sharing.nfs.delete   takes    id
-            #sharing.nfs.get_instance  takes    id
-            #sharing.nfs.query      takes query-filters
-            #sharing.nfs.update
+    def get_share_info(self, share_path: str):
         """
+        Get the share information for a given share name.
+        """
+        return self.__get("sharing.nfs.query", [["path", "=", share_path]])
+
+        
+    def get_dataset_info(self, dataset_path: str, details: bool = False):
+        """
+        Get the dataset information for a given dataset mountpoint.
+        """
+        r = self.__get("pool.dataset.details")
+        matches = [i for i in r if i['mountpoint'] == dataset_path]
+        if matches:
+            if details:
+                return matches[0]
+            else:
+                # Return only the mountpoint and quota
+                return {
+                    'mountpoint': matches[0]['mountpoint'],
+                    'used': matches[0]['used']['parsed'],
+                    'quota': matches[0]['refquota']['parsed']
+                }
+        else:
+            return None
+
     def __send_arg_call(self, command: str, *args):
         """
         Send a single command to TrueNas with the provided arguments.
         """
         with Client(uri=self.uri , verify_ssl=self.verify_ssl) as c:
-            c.call("auth.login", {
-                "api_key": self.api_key
-            })
+            c.call("auth.login_with_api_key", self.api_key)
             c.ping()
             print(f"Sending command: {command} with args: {args}")
             c.call(command, *args)
@@ -168,9 +229,7 @@ class TrueNasClient:
     def __send_calls(self, commands: list[tuple[str, dict]]):
 
         with Client(uri=self.uri , verify_ssl=self.verify_ssl) as c:
-            c.call("auth.login", {
-                "api_key": self.api_key
-            })
+            c.call("auth.login_with_api_key", self.api_key)
             c.ping()
             for command, payload in commands:
                 # Send the command to TrueNas
@@ -180,10 +239,22 @@ class TrueNasClient:
     def __send_job(self, command: str, payload: dict):
 
         with Client(uri=self.uri , verify_ssl=self.verify_ssl) as c:
-            c.call("auth.login", {
-                "api_key": self.api_key
-            })
+            c.call("auth.login_with_api_key", self.api_key)
             c.ping()
             print(f"Sending job: {command} with payload: {payload}")           
             c.call(command, payload, job=True)
+    
+    def __get(self, command: str, identifier: str = None):
+        """
+        Get the result of a command from TrueNas.
+        """
+        with Client(uri=self.uri , verify_ssl=self.verify_ssl) as c:
+            c.call("auth.login_with_api_key", self.api_key)
+            c.ping()
+            if identifier:
+                print(f"Getting command: {command} with identifier: {identifier}")
+                return c.call(command, identifier)
+            else:
+                print(f"Getting command: {command}")
+                return c.call(command)           
 
