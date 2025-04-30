@@ -109,7 +109,7 @@ class TrueNASClient:
             "comment": 'globus'
         })
     
-    def check_share_details(self, project_name: str, quota: int, owner_uid: int, owning_group_gid: int):
+    def check_share_details(self, project_name: str, quota: int, owner_uid: int, owning_group_gid: int, expected_perms: str = '770'):
         project_path = Path(f"/mnt/{self.parent_dataset}") / project_name
         
         share_details = {"dataset_exists": False,
@@ -127,7 +127,7 @@ class TrueNASClient:
             return share_details
         else:
             share_details['dataset_exists'] = True
-            share_details['quota_matches'] = di['quota'] == quota
+            share_details['quota_matches'] = di['refquota']['parsed'] == quota
         # Check if the share already exists
         si = self.get_share_info(project_path.as_posix())
         if len(si) == 0:
@@ -139,7 +139,19 @@ class TrueNASClient:
         acls = self.get_acls(project_name)
         share_details['owner_match'] = acls['uid'] == owner_uid
         share_details['group_match'] = acls['gid'] == owning_group_gid
-        share_details['permissions_match'] = all([i['perms'] == self.generate_acls('770')[0]['perms'] for i in acls['acls']])
+
+        expected_acls = self.generate_acls(expected_perms)
+        # Check if the permissions match
+        share_details['permissions_match'] = True
+        for perm in acls['acl']:
+            tag = perm['tag']
+            try:
+              share_details['permissions_match'] = share_details['permissions_match'] and perm['perms'] == [n['perms'] for n in expected_acls if n['tag'] == tag][0]
+
+            except IndexError:
+              share_details['permissions_match'] = False
+
+        # Check if the permissions match
         return share_details
 
 
