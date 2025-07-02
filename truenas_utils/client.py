@@ -208,6 +208,23 @@ class TrueNASClient:
         """
         return self.__get("sharing.nfs.query", [["path", "=", share_path]])
 
+    def update_quota(self, dataset_path: str, new_quota: int):
+        """
+        Update the quota for a given dataset mountpoint.
+        """
+        dataset_info = self.get_dataset_info(dataset_path, details=True)
+        if dataset_info is None:
+            raise ValueError(f"Dataset {dataset_path} does not exist.")
+        dataset_name = dataset_info['name']
+        if dataset_info['refquota']['parsed'] == new_quota:
+            raise ValueError(f"Quota for {dataset_path} is already set to {new_quota}. No changes made.")
+        if new_quota < 0:
+            raise ValueError(f"Quota must be a positive integer. Received: {new_quota}")
+        if new_quota < dataset_info['usedbydataset']['parsed']:
+            raise ValueError(f"New quota {new_quota} cannot be less than the current used space {dataset_info['usedbydataset']['parsed']}.")
+        
+        print(f"Updating quota for {dataset_path} to {new_quota}")
+        self.__send_arg_call("pool.dataset.set_quota", dataset_name, [{"id": "REFQUOTA", "quota_type": "DATASET", "quota_value": new_quota}])
         
     def get_dataset_info(self, dataset_path: str, details: bool = False):
         """
