@@ -222,8 +222,6 @@ class TrueNASClient:
             raise ValueError(f"Quota must be a positive integer. Received: {new_quota}")
         if new_quota < dataset_info['usedbydataset']['parsed']:
             raise ValueError(f"New quota {new_quota} cannot be less than the current used space {dataset_info['usedbydataset']['parsed']}.")
-        
-        print(f"Updating quota for {dataset_path} to {new_quota}")
         self.__send_arg_call("pool.dataset.set_quota", dataset_name, [{"id": "REFQUOTA", "quota_type": "DATASET", "quota_value": new_quota}])
         
     def get_dataset_info(self, dataset_path: str, details: bool = False):
