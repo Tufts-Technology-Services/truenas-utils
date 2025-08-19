@@ -197,10 +197,9 @@ class TrueNASClient:
         self.__send_job("filesystem.setacl", {
                 "path": project_path.as_posix(),
                 "dacl": self.generate_acls('770'),
-                "acltype": "POSIX1E"
+                "acltype": "POSIX1E",
+                "flags": {"setuid": False, "setgid": True, "sticky": False}
         })
-        # todo: customize message depending on what calls were made
-        #print(f"Created Tier2 dataset and share {project_name} with quota {quota} for owner UID {owner_uid} and GID {owning_group_gid}.")
 
     def get_share_info(self, share_path: str):
         """
