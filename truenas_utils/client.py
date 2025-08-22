@@ -197,8 +197,12 @@ class TrueNASClient:
         self.__send_job("filesystem.setacl", {
                 "path": project_path.as_posix(),
                 "dacl": self.generate_acls('770'),
-                "acltype": "POSIX1E",
-                "flags": {"setuid": False, "setgid": True, "sticky": False}
+                "acltype": "POSIX1E"
+        })
+        # we can't set the 
+        self.__send_arg_call("pool.dataset.update", f"{self.parent_dataset}/{project_name}", {
+            "acltype": "NFSV4",
+            "aclmode": "PASSTHROUGH"
         })
 
     def get_share_info(self, share_path: str):
