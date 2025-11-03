@@ -1,6 +1,6 @@
 [project]
 name = "truenas-utils"
-version = "0.1.0"
+version = "0.1.1"
 description = "code to abstract working with truenas data platform api"
 authors = [{name="Chris Barnett", email="Christopher.Barnett@tufts.edu"}]
 dependencies = [
