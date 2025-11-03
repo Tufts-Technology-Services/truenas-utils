@@ -90,7 +90,7 @@ class TrueNASClient:
         #path, simplified, resolve_ids
         return self.__get("filesystem.getacl", project_path.as_posix())
     
-    def create_starfish_share(self, project_path: Path):
+    def create_starfish_share(self, project_path: Path, read_only: bool = True):
         return ("sharing.nfs.create", {
             "path": project_path.as_posix(),  # Convert to POSIX path
             "security": ['SYS'],
@@ -98,7 +98,7 @@ class TrueNASClient:
             "maproot_user": 'root',
             "maproot_group": 'wheel',
             "comment": 'starfish',
-            "ro": True
+            "ro": read_only
         })
     
     def create_globus_share(self, project_path: Path):
@@ -161,7 +161,7 @@ class TrueNASClient:
         """
         Create a dataset and NFS share for an RT project.
         # Create dataset with quota
-        # Create the NFS Share for starfish, RO, no_root_squash
+        # Create the NFS Share for starfish, RO=False, no_root_squash
         # Create the NFS Share for globus DTNs
         # Set owners (chown)
         # Set permissions (chmod)
@@ -184,7 +184,7 @@ class TrueNASClient:
                 "refquota": quota
             }))
         if create_starfish_share:
-            calls.append(self.create_starfish_share(project_path))
+            calls.append(self.create_starfish_share(project_path, read_only=False))
         if create_globus_share:
             calls.append(self.create_globus_share(project_path))
         self.__send_calls(calls)  # Send the commands to TrueNas
