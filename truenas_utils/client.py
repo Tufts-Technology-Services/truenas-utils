@@ -245,6 +245,20 @@ class TrueNASClient:
                 }
         else:
             return None
+    
+    def get_all_datasets(self):
+        """
+        Get all datasets information.
+        """
+        r = self.__get("pool.dataset.details")
+        results = []
+        for item in r:
+            results.append({
+                'mountpoint': item['mountpoint'],
+                'used': item['used']['parsed'],
+                'quota': item['refquota']['parsed']
+            })
+        return results
 
     def __send_arg_call(self, command: str, *args):
         """
