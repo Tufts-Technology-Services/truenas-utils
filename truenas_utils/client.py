@@ -240,8 +240,9 @@ class TrueNASClient:
                 # Return only the mountpoint and quota
                 return {
                     'mountpoint': matches[0]['mountpoint'],
-                    'used': matches[0]['used']['parsed'],
-                    'quota': matches[0]['refquota']['parsed']
+                    'used': matches[0]['usedbydataset']['parsed'],
+                    'quota': matches[0]['refquota']['parsed'],
+                    'snapshot_size': matches[0]['usedbysnapshots']['parsed']
                 }
         else:
             return None
@@ -255,8 +256,9 @@ class TrueNASClient:
         for item in r:
             results.append({
                 'mountpoint': item['mountpoint'],
-                'used': item['used']['parsed'],
-                'quota': item['refquota']['parsed']
+                'used': item['usedbydataset']['parsed'],
+                'quota': item['refquota']['parsed'],
+                'snapshot_size': item['usedbysnapshots']['parsed']
             })
         return results
 
