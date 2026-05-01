@@ -10,6 +10,7 @@ VERIFY_SSL = os.environ.get('TRUENAS_VERIFY_SSL', 'False').lower() in ['true', '
 
 STARFISH_HOSTS = os.environ.get('STARFISH_HOSTS', [])
 GLOBUS_HOSTS = os.environ.get('GLOBUS_HOSTS', [])
+GATEWAY_HOSTS = os.environ.get('GATEWAY_HOSTS', [])
 
 
 class TrueNASClient:
@@ -18,16 +19,18 @@ class TrueNASClient:
     This class provides methods to create datasets and NFS shares.
     It uses the TrueNas API to perform these operations.
     """
+    starfish_hosts: list[str] = STARFISH_HOSTS
+    globus_hosts: list[str] = GLOBUS_HOSTS
+    gateway_hosts: list[str] = GATEWAY_HOSTS
+
     def __init__(self, api_key=TRUENAS_APIKEY, hostname=TRUENAS_HOST, parent_dataset=TRUENAS_PARENT_DATASET,
-                 verify_ssl=VERIFY_SSL, starfish_hosts=STARFISH_HOSTS, globus_hosts=GLOBUS_HOSTS):
+                 verify_ssl=VERIFY_SSL):
         if api_key is None:
             raise ValueError("API key is required to connect to TrueNas.")
         self.api_key = api_key
         self.uri = f"wss://{hostname}/websocket"
         self.parent_dataset = parent_dataset
         self.verify_ssl = verify_ssl
-        self.starfish_hosts = starfish_hosts
-        self.globus_hosts = globus_hosts
 
     def ping(self):
         """Ping the TrueNas server to check if the connection is alive."""
@@ -90,24 +93,44 @@ class TrueNASClient:
         #path, simplified, resolve_ids
         return self.__get("filesystem.getacl", project_path.as_posix())
     
-    def create_starfish_share(self, project_path: Path, read_only: bool = True):
-        return ("sharing.nfs.create", {
+    def create_starfish_share(self, project_path: Path, hosts: list[str], read_only: bool = True, send: bool = False):
+        obj = ("sharing.nfs.create", {
             "path": project_path.as_posix(),  # Convert to POSIX path
             "security": ['SYS'],
-            "hosts": self.starfish_hosts,
+            "hosts": hosts,
             "maproot_user": 'root',
             "maproot_group": 'wheel',
             "comment": 'starfish',
             "ro": read_only
         })
+        if send:
+            self.__send_calls([obj])
+        else:
+            return obj
     
-    def create_globus_share(self, project_path: Path):
-        return ("sharing.nfs.create", {
+    def create_globus_share(self, project_path: Path, hosts: list[str], send: bool = False):
+        obj = ("sharing.nfs.create", {
             "path": project_path.as_posix(),  # Convert to POSIX path
             "security": ['SYS'],
-            "hosts": self.globus_hosts,
+            "hosts": hosts,
             "comment": 'globus'
         })
+        if send:
+            self.__send_calls([obj])
+        else:
+            return obj
+    
+    def create_login_share(self, project_path: Path, hosts: list[str], send: bool = False):
+        obj = ("sharing.nfs.create", {
+            "path": project_path.as_posix(),  # Convert to POSIX path
+            "security": ['SYS'],
+            "hosts": hosts,
+            "comment": 'gateway'
+        })
+        if send:
+            self.__send_calls([obj])
+        else:
+            return obj
     
     def check_share_details(self, project_name: str, quota: int, owner_uid: int, owning_group_gid: int, expected_perms: str = '770'):
         project_path = Path(f"/mnt/{self.parent_dataset}") / project_name
@@ -116,6 +139,7 @@ class TrueNASClient:
                          "quota_matches": False,
                          "starfish_share_exists": False,
                          "globus_share_exists": False,
+                         "gateway_share_exists": False,
                          "owner_match": False,
                          "group_match": False,
                          "permissions_match": False
@@ -135,7 +159,8 @@ class TrueNASClient:
         else:
             share_details['starfish_share_exists'] = any([i for i in si if i['comment'] == 'starfish'])
             share_details['globus_share_exists'] = any([i for i in si if i['comment'] == 'globus'])
-        
+            share_details['gateway_share_exists'] = any([i for i in si if i['comment'] == 'gateway'])
+
         acls = self.get_acls(project_name)
         share_details['owner_match'] = acls['uid'] == owner_uid
         share_details['group_match'] = acls['gid'] == owning_group_gid
@@ -157,12 +182,13 @@ class TrueNASClient:
 
     def create_project_share(self, project_name: str, quota: int, owner_uid: int, owning_group_gid: int,
                              create_dataset: bool = True, create_globus_share: bool = True,
-                             create_starfish_share: bool = True):
+                             create_starfish_share: bool = True, create_gateway_share: bool = True):
         """
         Create a dataset and NFS share for an RT project.
         # Create dataset with quota
         # Create the NFS Share for starfish, RO=False, no_root_squash
         # Create the NFS Share for globus DTNs
+        # Create the NFS Share for gateway hosts
         # Set owners (chown)
         # Set permissions (chmod)
         """
@@ -184,9 +210,11 @@ class TrueNASClient:
                 "refquota": quota
             }))
         if create_starfish_share:
-            calls.append(self.create_starfish_share(project_path, read_only=False))
+            calls.append(self.create_starfish_share(project_path, self.starfish_hosts, read_only=False))
         if create_globus_share:
-            calls.append(self.create_globus_share(project_path))
+            calls.append(self.create_globus_share(project_path, self.globus_hosts))
+        if create_gateway_share:
+            calls.append(self.create_login_share(project_path, self.gateway_hosts))
         self.__send_calls(calls)  # Send the commands to TrueNas
 
         self.__send_job("filesystem.chown", {
