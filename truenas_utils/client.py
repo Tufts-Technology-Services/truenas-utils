@@ -192,6 +192,17 @@ class TrueNASClient:
         # Set owners (chown)
         # Set permissions (chmod)
         """
+        # handle case where project name includes parent dataset path, e.g. "pool/dataset/project_name"
+        if project_name.startswith(f"{self.parent_dataset}/"):
+            project_name = project_name.split(f"{self.parent_dataset}/")[1]
+        if project_name.startswith(f"/mnt/{self.parent_dataset}/"):
+            project_name = project_name.split(f"/mnt/{self.parent_dataset}/")[1]
+        project_name = project_name.strip("/").strip()
+        # validate that project name is not empty and does not contain invalid characters
+        if not project_name:
+            raise ValueError("Project name cannot be empty.")
+        if any(c in project_name for c in ['/', '\\', ':', '*', '?', '"', '<', '>', '|', ' ']):
+            raise ValueError("Project name cannot contain any of the following characters: / \\ : * ? \" < > | <space>")
         project_path = Path(f"/mnt/{self.parent_dataset}") / project_name
         
         # Create the dataset and share
